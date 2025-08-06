@@ -5,7 +5,6 @@ import {
   Get,
   Param,
   Delete,
-  UseGuards,
   HttpStatus,
   HttpCode,
 } from '@nestjs/common';
@@ -19,11 +18,9 @@ import {
 
 import { QueueService } from './queue.service';
 import { CreateDownloadJobDto } from '../../common/dto/download-job.dto';
-import { AuthGuard } from '../auth/guards/auth.guard';
 
 @ApiTags('queue')
 @Controller('queue')
-// @UseGuards(AuthGuard)
 @ApiBearerAuth()
 export class QueueController {
   constructor(private readonly queueService: QueueService) {}

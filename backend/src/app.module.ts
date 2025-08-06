@@ -3,7 +3,6 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { BullModule } from '@nestjs/bull';
-import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { getMongoConfig } from './configs/mongo.config';
@@ -11,10 +10,8 @@ import { getBullConfig } from './configs/bull.config';
 import { SymbolModule } from './modules/symbol/symbol.module';
 import { HistoryModule } from './modules/history/history.module';
 import { BinanceModule } from './modules/binance/binance.module';
-import { AuthModule } from './modules/auth/auth.module';
 import { WebsocketModule } from './modules/websocket/websocket.module';
 import { QueueModule } from './modules/queue/queue.module';
-import { CronModule } from './modules/cron/cron.module';
 import type { ConfigModuleOptions } from '@nestjs/config';
 
 const envExt = 'env';
@@ -48,9 +45,6 @@ const envFilePath: ConfigModuleOptions['envFilePath'] = [
       inject: [ConfigService],
     }),
 
-    // Планировщик задач
-    ScheduleModule.forRoot(),
-
     // Rate limiting
     ThrottlerModule.forRoot([
       {
@@ -63,10 +57,8 @@ const envFilePath: ConfigModuleOptions['envFilePath'] = [
     SymbolModule,
     HistoryModule,
     BinanceModule,
-    AuthModule,
     WebsocketModule,
     QueueModule,
-    CronModule,
   ],
   controllers: [AppController],
 })

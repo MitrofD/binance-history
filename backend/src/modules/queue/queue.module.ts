@@ -4,17 +4,17 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { QueueService } from './queue.service';
 import { DownloadProcessor } from './processors/download.processor';
 import { QueueController } from './queue.controller';
-import { AuthModule } from '../auth/auth.module';
 import { DownloadJob, DownloadJobSchema } from './schemas/download-job.schema';
+import { Symbol, SymbolSchema } from '../symbol/schemas/symbol.schema';
 import { BinanceModule } from '../binance/binance.module';
 import { HistoryModule } from '../history/history.module';
 import { WebsocketModule } from '../websocket/websocket.module';
 
 @Module({
   imports: [
-    AuthModule,
     MongooseModule.forFeature([
       { name: DownloadJob.name, schema: DownloadJobSchema },
+      { name: Symbol.name, schema: SymbolSchema },
     ]),
     BullModule.registerQueue({
       name: 'download',

@@ -1,11 +1,9 @@
 import {
   Controller,
   Get,
-  Post,
   Patch,
   Param,
   Body,
-  UseGuards,
 } from '@nestjs/common';
 
 import {
@@ -17,12 +15,10 @@ import {
 
 import { SymbolService } from './symbol.service';
 import { QueueService } from '../queue/queue.service';
-import { AuthGuard } from '../auth/guards/auth.guard';
 import { Timeframe } from '../../common/enums/timeframe.enum';
 
 @ApiTags('symbols')
 @Controller('symbols')
-// @UseGuards(AuthGuard)
 @ApiBearerAuth()
 export class SymbolController {
   constructor(
@@ -108,18 +104,6 @@ export class SymbolController {
     return {
       success: true,
       data: job,
-    };
-  }
-
-  @Post('sync')
-  @ApiOperation({ summary: 'Sync symbols from Binance' })
-  @ApiResponse({ status: 200, description: 'Symbols synced successfully' })
-  async syncSymbols() {
-    const result = await this.symbolService.syncSymbolsFromBinance();
-    return {
-      success: true,
-      data: result,
-      message: `Sync completed: ${result.added} added, ${result.updated} updated, ${result.deactivated} deactivated`,
     };
   }
 

@@ -2,7 +2,6 @@ import {
   Controller,
   Get,
   Query,
-  UseGuards,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
@@ -17,12 +16,10 @@ import {
 
 import { HistoryService } from './history.service';
 import { HistoryQueryDto } from '../../common/dto/history-query.dto';
-import { AuthGuard } from '../auth/guards/auth.guard';
 import { Timeframe } from '../../common/enums/timeframe.enum';
 
 @ApiTags('history')
 @Controller('history')
-@UseGuards(AuthGuard)
 @ApiBearerAuth()
 export class HistoryController {
   constructor(private readonly historyService: HistoryService) {}

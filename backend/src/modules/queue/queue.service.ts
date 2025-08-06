@@ -9,6 +9,8 @@ import {
   DownloadJobDocument,
 } from './schemas/download-job.schema';
 
+import { Symbol, SymbolDocument } from '../symbol/schemas/symbol.schema';
+import { BinanceService } from '../binance/binance.service';
 import { Timeframe } from 'src/common/enums/timeframe.enum';
 import { CreateDownloadJobDto } from '../../common/dto/download-job.dto';
 import { JobStatus } from '../../common/enums/job-status.enum';
@@ -21,6 +23,9 @@ export class QueueService {
     @InjectQueue('download') private downloadQueue: Queue,
     @InjectModel(DownloadJob.name)
     private downloadJobModel: Model<DownloadJobDocument>,
+    @InjectModel(Symbol.name)
+    private symbolModel: Model<SymbolDocument>,
+    private readonly binanceService: BinanceService,
   ) {}
 
   async createDownloadJob(
@@ -39,6 +44,8 @@ export class QueueService {
         `Download job for ${createJobDto.symbol} ${createJobDto.timeframe} is already running`,
       );
     }
+
+    await this.ensureSymbolExists(createJobDto.symbol);
 
     // Создаем запись в БД
     const job = new this.downloadJobModel({
@@ -71,6 +78,61 @@ export class QueueService {
       `Created download job ${savedJob._id} for ${createJobDto.symbol} ${createJobDto.timeframe}`,
     );
     return savedJob;
+  }
+
+  private async ensureSymbolExists(symbol: string): Promise<void> {
+    try {
+      // Проверяем есть ли символ в базе
+      const existingSymbol = await this.symbolModel.findOne({
+        symbol: symbol.toUpperCase(),
+      });
+
+      if (!existingSymbol) {
+        // Получаем информацию о символе с Binance
+        const exchangeInfo = await this.binanceService.getExchangeInfo();
+        const symbolInfo = exchangeInfo.symbols.find(
+          (s) => s.symbol === symbol.toUpperCase(),
+        );
+
+        if (symbolInfo) {
+          // Создаем новый символ
+          const newSymbol = new this.symbolModel({
+            symbol: symbolInfo.symbol,
+            baseAsset: symbolInfo.baseAsset,
+            quoteAsset: symbolInfo.quoteAsset,
+            isActive: true,
+            timeframes: this.getDefaultTimeframesObject(),
+          });
+
+          await newSymbol.save();
+          this.logger.log(`Created new symbol: ${symbolInfo.symbol}`);
+        } else {
+          this.logger.warn(`Symbol ${symbol} not found on Binance`);
+          throw new Error(`Symbol ${symbol} not found on Binance`);
+        }
+      } else if (!existingSymbol.isActive) {
+        // Если символ есть но неактивен, активируем его
+        existingSymbol.isActive = true;
+        await existingSymbol.save();
+        this.logger.log(`Reactivated symbol: ${symbol}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error ensuring symbol exists: ${symbol}`, error);
+      throw error;
+    }
+  }
+
+  private getDefaultTimeframesObject() {
+    const timeframes = {};
+    Object.values(Timeframe).forEach((tf) => {
+      timeframes[tf] = {
+        earliestData: null,
+        latestData: null,
+        totalCandles: 0,
+        lastUpdated: null,
+      };
+    });
+    return timeframes;
   }
 
   async cancelJob(jobId: string): Promise<boolean> {

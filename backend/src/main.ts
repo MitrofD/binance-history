@@ -24,7 +24,6 @@ async function bootstrap() {
     .setTitle('Binance History Service')
     .setDescription('API for managing historical cryptocurrency data from Binance')
     .setVersion('1.0')
-    .addBearerAuth()
     .build();
   
   const document = SwaggerModule.createDocument(app, config);
