@@ -191,4 +191,17 @@ export class SymbolService {
       timeframeStats,
     };
   }
+
+  async healthCheck(): Promise<{ status: string; symbolsCount: number }> {
+    try {
+      const count = await this.symbolModel.countDocuments({ isActive: true });
+      return {
+        status: 'healthy',
+        symbolsCount: count,
+      };
+    } catch (error) {
+      this.logger.error('MongoDB health check failed:', error);
+      throw new Error('MongoDB connection failed');
+    }
+  }
 }

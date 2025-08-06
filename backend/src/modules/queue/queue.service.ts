@@ -273,4 +273,38 @@ export class QueueService {
 
     return { total, pending, running, completed, failed, cancelled };
   }
+
+  async healthCheck(): Promise<{
+    status: string;
+    activeJobs: number;
+    queueStats: any;
+  }> {
+    try {
+      // Проверяем соединение с Redis через ping
+      const ping = await this.downloadQueue.client.ping();
+
+      // Получаем статистику очереди
+      const [waiting, active, completed, failed] = await Promise.all([
+        this.downloadQueue.getWaiting(),
+        this.downloadQueue.getActive(),
+        this.downloadQueue.getCompleted(),
+        this.downloadQueue.getFailed(),
+      ]);
+
+      return {
+        status: 'healthy',
+        activeJobs: active.length,
+        queueStats: {
+          waiting: waiting.length,
+          active: active.length,
+          completed: completed.length,
+          failed: failed.length,
+          ping: ping === 'PONG' ? 'ok' : 'error',
+        },
+      };
+    } catch (error) {
+      this.logger.error('Redis health check failed:', error);
+      throw new Error('Redis connection failed');
+    }
+  }
 }

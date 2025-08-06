@@ -113,6 +113,41 @@ export class BinanceService {
     }
   }
 
+  private async makeRequestWithRetry<T>(
+    requestFn: () => Promise<T>,
+    maxRetries: number = 3,
+    baseDelay: number = 1000,
+  ): Promise<T> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await requestFn();
+      } catch (error) {
+        if (attempt === maxRetries) {
+          throw error;
+        }
+
+        if (error.response?.status === 429) {
+          // Rate limit - ждем дольше
+          const delay = baseDelay * Math.pow(2, attempt) + 60000; // +1 минута
+          this.logger.warn(
+            `Rate limit hit, waiting ${delay}ms (attempt ${attempt})`,
+          );
+          await this.sleep(delay);
+        } else if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
+          // Network issues - экспоненциальный backoff
+          const delay = baseDelay * Math.pow(2, attempt);
+          this.logger.warn(
+            `Network error, retrying in ${delay}ms (attempt ${attempt})`,
+          );
+          await this.sleep(delay);
+        } else {
+          // Другие ошибки - не ретраим
+          throw error;
+        }
+      }
+    }
+  }
+
   async getKlines(
     symbol: string,
     interval: Timeframe,
@@ -120,7 +155,7 @@ export class BinanceService {
     endTime?: number,
     limit: number = 1500,
   ): Promise<BinanceKlineData[]> {
-    try {
+    return this.makeRequestWithRetry(async () => {
       await this.checkWeightLimit(1);
 
       const params: any = {
@@ -154,21 +189,7 @@ export class BinanceService {
         takerBuyQuoteAssetVolume: kline[10],
         ignore: kline[11],
       }));
-    } catch (error) {
-      this.logger.error(`Failed to get klines for ${symbol}`, error);
-
-      if (error.response?.status === 429) {
-        throw new HttpException(
-          'Rate limit exceeded',
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
-
-      throw new HttpException(
-        `Failed to fetch klines for ${symbol}`,
-        HttpStatus.SERVICE_UNAVAILABLE,
-      );
-    }
+    });
   }
 
   // Получение исторических данных с батчингом
