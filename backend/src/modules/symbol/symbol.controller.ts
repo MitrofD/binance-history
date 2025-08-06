@@ -22,7 +22,7 @@ import { Timeframe } from '../../common/enums/timeframe.enum';
 
 @ApiTags('symbols')
 @Controller('symbols')
-@UseGuards(AuthGuard)
+// @UseGuards(AuthGuard)
 @ApiBearerAuth()
 export class SymbolController {
   constructor(

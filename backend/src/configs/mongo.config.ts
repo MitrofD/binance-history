@@ -26,8 +26,6 @@ export const getMongoConfig = (
 
   uri += `${dbHost}:${dbPort}/${dbName}`;
 
-  console.log(uri);
-
   return {
     uri,
   };

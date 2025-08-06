@@ -22,7 +22,7 @@ export class BinanceService {
   private weightResetTime = Date.now();
 
   constructor(private readonly configService: ConfigService) {
-    this.baseUrl = this.configService.get<string>('BINANCE_API_BASE_URL');
+    this.baseUrl = 'https://fapi.binance.com';
     this.weightLimit = this.configService.get<number>(
       'BINANCE_WEIGHT_LIMIT',
       6000,

@@ -92,9 +92,8 @@ export class SymbolService {
   }
 
   async getSymbolsWithLoadingStatus(): Promise<any[]> {
-    const symbols = await this.symbolModel
-      .find({ isActive: true })
-      .sort({ symbol: 1 });
+    const symbols = await this.symbolModel.find({ isActive: true });
+    // .sort({ symbol: 1 });
 
     // Получаем все активные задачи загрузки
     const activeJobs = await this.queueService.getActiveJobs();

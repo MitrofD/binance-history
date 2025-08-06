@@ -104,6 +104,7 @@ export class HistoryService {
     }
 
     const timeframeData = symbolDoc.timeframes[timeframe];
+
     return {
       earliestData: timeframeData.earliestData,
       latestData: timeframeData.latestData,

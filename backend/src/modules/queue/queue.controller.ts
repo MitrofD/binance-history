@@ -23,7 +23,7 @@ import { AuthGuard } from '../auth/guards/auth.guard';
 
 @ApiTags('queue')
 @Controller('queue')
-@UseGuards(AuthGuard)
+// @UseGuards(AuthGuard)
 @ApiBearerAuth()
 export class QueueController {
   constructor(private readonly queueService: QueueService) {}
