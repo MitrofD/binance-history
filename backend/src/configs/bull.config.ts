@@ -1,19 +1,11 @@
 import { ConfigService } from '@nestjs/config';
+import { getBullRedisConfig } from './redis.config';
 import type { BullRootModuleOptions } from '@nestjs/bull';
 
-export const getBullConfig = (configService: ConfigService) => {
-  const redisOptions: BullRootModuleOptions['redis'] = {
-    host: configService.get('REDIS_HOST', 'localhost'),
-    port: configService.get('REDIS_PORT', 6379),
-  };
-
-  const password = configService.get('REDIS_PASSWORD');
-
-  if (typeof password === 'string') {
-    redisOptions.password = password;
-  }
-
+export const getBullConfig = (
+  configService: ConfigService,
+): BullRootModuleOptions => {
   return {
-    redis: redisOptions,
+    redis: getBullRedisConfig(configService),
   };
 };

@@ -292,6 +292,7 @@ export class DownloadProcessor {
       requestedStart.getTime(),
       earliestData?.getTime() || 0,
     );
+
     const overlapEnd = Math.min(
       requestedEnd.getTime(),
       latestData?.getTime() || Date.now(),
