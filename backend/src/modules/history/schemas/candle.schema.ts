@@ -47,7 +47,39 @@ export class Candle {
 export type CandleDocument = HydratedDocument<Candle>;
 export const CandleSchema = SchemaFactory.createForClass(Candle);
 
-// Составные индексы для быстрого поиска
-CandleSchema.index({ symbol: 1, timeframe: 1, openTime: 1 }, { unique: true });
-CandleSchema.index({ symbol: 1, timeframe: 1, openTime: -1 });
-CandleSchema.index({ openTime: 1 });
+// 1. ОСНОВНОЙ УНИКАЛЬНЫЙ ИНДЕКС
+CandleSchema.index(
+  { symbol: 1, timeframe: 1, openTime: 1 },
+  {
+    unique: true,
+    name: 'primary_unique_constraint',
+    background: true,
+  },
+);
+
+// 2. ИНДЕКС ДЛЯ ПОИСКА ПОСЛЕДНИХ ДАННЫХ (DESC)
+CandleSchema.index(
+  { symbol: 1, timeframe: 1, openTime: -1 },
+  {
+    name: 'latest_data_desc',
+    background: true,
+  },
+);
+
+// 3. ИНДЕКС ДЛЯ CURSOR ПАГИНАЦИИ
+CandleSchema.index(
+  { openTime: 1, symbol: 1, timeframe: 1 },
+  {
+    name: 'cursor_pagination',
+    background: true,
+  },
+);
+
+// 4. ИНДЕКС ДЛЯ СТАТИСТИКИ (БЕЗ времени)
+CandleSchema.index(
+  { symbol: 1, timeframe: 1 },
+  {
+    name: 'statistics_fast',
+    background: true,
+  },
+);

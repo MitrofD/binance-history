@@ -62,7 +62,7 @@ export class DownloadProcessor {
         symbol,
         timeframe as any,
         requestedStart,
-        requestedEnd
+        requestedEnd,
       );
 
       if (downloadRanges.length === 0) {
@@ -71,6 +71,8 @@ export class DownloadProcessor {
         this.websocketGateway.emitJobCompleted(jobId, {
           progress: 100,
           totalCandles: 0,
+          newCandles: 0,
+          updatedCandles: 0,
           message: 'All data already exists',
           symbol,
           timeframe,
@@ -81,7 +83,9 @@ export class DownloadProcessor {
       // Логируем найденные диапазоны
       this.logger.log(`Found ${downloadRanges.length} ranges to download:`);
       downloadRanges.forEach((range, i) => {
-        this.logger.log(`  ${i + 1}. ${range.type}: ${range.start.toISOString()} - ${range.end.toISOString()} (${range.description})`);
+        this.logger.log(
+          `  ${i + 1}. ${range.type}: ${range.start.toISOString()} - ${range.end.toISOString()} (${range.description})`,
+        );
       });
 
       this.websocketGateway.emitJobUpdate(jobId, {
@@ -96,15 +100,17 @@ export class DownloadProcessor {
 
       let allKlines: any[] = [];
       const totalRanges = downloadRanges.length;
-      
+
       // Загружаем данные по диапазонам
       for (let i = 0; i < downloadRanges.length; i++) {
         const range = downloadRanges[i];
         const rangeProgress = i / totalRanges;
         const nextRangeProgress = (i + 1) / totalRanges;
-        
-        this.logger.log(`Downloading range ${i + 1}/${totalRanges} (${range.type}): ${range.start.toISOString()} - ${range.end.toISOString()}`);
-        
+
+        this.logger.log(
+          `Downloading range ${i + 1}/${totalRanges} (${range.type}): ${range.start.toISOString()} - ${range.end.toISOString()}`,
+        );
+
         this.websocketGateway.emitJobUpdate(jobId, {
           status: 'running',
           progress: Math.round(5 + rangeProgress * 85), // 5-90% для загрузки
@@ -121,7 +127,10 @@ export class DownloadProcessor {
           range.start,
           range.end,
           (rangeProgressPercent, processedCandles) => {
-            const totalRangeProgress = rangeProgress + (rangeProgressPercent / 100) * (nextRangeProgress - rangeProgress);
+            const totalRangeProgress =
+              rangeProgress +
+              (rangeProgressPercent / 100) *
+                (nextRangeProgress - rangeProgress);
             const adjustedProgress = 5 + totalRangeProgress * 85;
 
             // Обновляем прогресс в БД
@@ -146,8 +155,17 @@ export class DownloadProcessor {
         );
 
         allKlines.push(...klines);
-        this.logger.log(`Downloaded ${klines.length} candles for range ${i + 1}/${totalRanges} (${range.type})`);
+        this.logger.log(
+          `Downloaded ${klines.length} candles for range ${i + 1}/${totalRanges} (${range.type})`,
+        );
       }
+
+      // Переменная для сохранения результатов
+      let saveResult: {
+        newRecords: number;
+        updatedRecords: number;
+        totalProcessed: number;
+      } | null = null;
 
       if (allKlines.length > 0) {
         // Уведомляем о начале сохранения
@@ -162,31 +180,47 @@ export class DownloadProcessor {
           endDate,
         });
 
-        // Сохраняем данные в MongoDB
+        // Сохраняем данные в MongoDB и получаем точную статистику
         this.logger.log(`Saving ${allKlines.length} candles to database`);
-        await this.historyService.saveCandles(symbol, timeframe as any, allKlines);
+        saveResult = await this.historyService.saveCandles(
+          symbol,
+          timeframe as any,
+          allKlines,
+        );
 
-        // Обновляем метаинформацию о символе
+        // Обновляем метаинформацию только для новых записей
         await this.historyService.updateSymbolMetadata(
           symbol,
           timeframe as any,
+          saveResult.newRecords, // Передаем только количество НОВЫХ записей
+        );
+
+        // Логирование с детальной статистикой
+        this.logger.log(
+          `Save completed: ${saveResult.newRecords} new, ${saveResult.updatedRecords} updated, ${saveResult.totalProcessed} total processed`,
         );
       }
 
       // Отмечаем задачу как завершенную
       await this.queueService.markJobAsCompleted(jobId, allKlines.length);
 
-      // Отправляем финальное уведомление
+      // Отправляем финальное уведомление с детальной статистикой
       this.websocketGateway.emitJobCompleted(jobId, {
         progress: 100,
         totalCandles: allKlines.length,
         processedCandles: allKlines.length,
-        message: `Successfully downloaded ${allKlines.length} new candles`,
+        newCandles: saveResult?.newRecords || 0,
+        updatedCandles: saveResult?.updatedRecords || 0,
+        message: saveResult
+          ? `Successfully processed ${allKlines.length} candles (${saveResult.newRecords} new, ${saveResult.updatedRecords} updated)`
+          : `Successfully downloaded ${allKlines.length} new candles`,
         symbol,
         timeframe,
       });
 
-      this.logger.log(`Completed download job ${jobId}: ${allKlines.length} new candles`);
+      this.logger.log(
+        `Completed download job ${jobId}: ${allKlines.length} total candles, ${saveResult?.newRecords || 0} new records`,
+      );
     } catch (error) {
       this.logger.error(`Download job ${jobId} failed:`, error);
 
@@ -207,51 +241,69 @@ export class DownloadProcessor {
     symbol: string,
     timeframe: any,
     requestedStart: Date,
-    requestedEnd: Date
+    requestedEnd: Date,
   ): Promise<DownloadRange[]> {
     const ranges: DownloadRange[] = [];
-    
+
     // Проверяем какие данные уже есть в базе
-    const existingRange = await this.historyService.getDataRange(symbol, timeframe);
-    
-    if (!existingRange || (!existingRange.earliestData && !existingRange.latestData)) {
+    const existingRange = await this.historyService.getDataRange(
+      symbol,
+      timeframe,
+    );
+
+    if (
+      !existingRange ||
+      (!existingRange.earliestData && !existingRange.latestData)
+    ) {
       // Нет данных - загружаем весь диапазон
       ranges.push({
         start: requestedStart,
         end: requestedEnd,
         type: 'before',
-        description: 'full range (no existing data)'
+        description: 'full range (no existing data)',
       });
       return ranges;
     }
 
     const { earliestData, latestData } = existingRange;
-    
-    this.logger.log(`Existing data range: ${earliestData?.toISOString()} - ${latestData?.toISOString()}`);
-    this.logger.log(`Requested range: ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`);
+
+    this.logger.log(
+      `Existing data range: ${earliestData?.toISOString()} - ${latestData?.toISOString()}`,
+    );
+    this.logger.log(
+      `Requested range: ${requestedStart.toISOString()} - ${requestedEnd.toISOString()}`,
+    );
 
     // 1. Проверяем нужны ли данные "до" существующих
     if (earliestData && requestedStart < earliestData) {
-      const endForEarlier = new Date(earliestData.getTime() - this.getIntervalInMs(timeframe));
+      const endForEarlier = new Date(
+        earliestData.getTime() - this.getIntervalInMs(timeframe),
+      );
       ranges.push({
         start: requestedStart,
         end: endForEarlier,
         type: 'before',
-        description: 'data before existing range'
+        description: 'data before existing range',
       });
     }
 
     // 2. Проверяем пропуски только если запрошенный диапазон пересекается с существующими данными
-    const overlapStart = Math.max(requestedStart.getTime(), earliestData?.getTime() || 0);
-    const overlapEnd = Math.min(requestedEnd.getTime(), latestData?.getTime() || Date.now());
-    
+    const overlapStart = Math.max(
+      requestedStart.getTime(),
+      earliestData?.getTime() || 0,
+    );
+    const overlapEnd = Math.min(
+      requestedEnd.getTime(),
+      latestData?.getTime() || Date.now(),
+    );
+
     if (overlapStart < overlapEnd && earliestData && latestData) {
       // Есть пересечение - проверяем пропуски только в области пересечения
       const gapsInRange = await this.findGapsInRange(
         symbol,
         timeframe,
         overlapStart,
-        overlapEnd
+        overlapEnd,
       );
 
       gapsInRange.forEach((gap, index) => {
@@ -259,27 +311,32 @@ export class DownloadProcessor {
           start: gap.start,
           end: gap.end,
           type: 'gap',
-          description: `gap ${index + 1} in existing data`
+          description: `gap ${index + 1} in existing data`,
         });
       });
     }
 
     // 3. Проверяем нужны ли данные "после" существующих
     if (latestData && requestedEnd > latestData) {
-      const startForLater = new Date(latestData.getTime() + this.getIntervalInMs(timeframe));
+      const startForLater = new Date(
+        latestData.getTime() + this.getIntervalInMs(timeframe),
+      );
       ranges.push({
         start: startForLater,
         end: requestedEnd,
         type: 'after',
-        description: 'data after existing range'
+        description: 'data after existing range',
       });
     }
 
     // Если запрошенный диапазон полностью покрыт существующими данными
-    if (earliestData && latestData && 
-        requestedStart >= earliestData && 
-        requestedEnd <= latestData &&
-        ranges.length === 0) {
+    if (
+      earliestData &&
+      latestData &&
+      requestedStart >= earliestData &&
+      requestedEnd <= latestData &&
+      ranges.length === 0
+    ) {
       this.logger.log('Requested range is fully covered by existing data');
       // Дополнительная проверка на случай, если checkDataGaps не обнаружил пропуски
       // но нужно убедиться что данные действительно есть
@@ -287,17 +344,19 @@ export class DownloadProcessor {
         symbol,
         timeframe,
         startTime: requestedStart.toISOString(),
-        endTime: new Date(requestedStart.getTime() + this.getIntervalInMs(timeframe)).toISOString(),
-        limit: 1
+        endTime: new Date(
+          requestedStart.getTime() + this.getIntervalInMs(timeframe),
+        ).toISOString(),
+        limit: 1,
       });
-      
-      if (sampleCheck.length === 0) {
+
+      if (sampleCheck.data.length === 0) {
         this.logger.log('Sample check failed - adding range for download');
         ranges.push({
           start: requestedStart,
           end: requestedEnd,
           type: 'gap',
-          description: 'verification failed - redownloading range'
+          description: 'verification failed - redownloading range',
         });
       }
     }
@@ -312,7 +371,7 @@ export class DownloadProcessor {
     symbol: string,
     timeframe: any,
     startTime: number,
-    endTime: number
+    endTime: number,
   ): Promise<Array<{ start: Date; end: Date }>> {
     if (startTime >= endTime) {
       return [];
@@ -320,23 +379,29 @@ export class DownloadProcessor {
 
     // Используем метод проверки пропусков из HistoryService для более точного анализа
     const daysDiff = Math.ceil((endTime - startTime) / (24 * 60 * 60 * 1000));
-    const gapCheck = await this.historyService.checkDataGaps(symbol, timeframe, daysDiff);
-    
+    const gapCheck = await this.historyService.checkDataGaps(
+      symbol,
+      timeframe,
+      daysDiff,
+    );
+
     if (!gapCheck.hasGaps) {
       return [];
     }
 
     // Фильтруем пропуски, которые попадают в запрошенный диапазон
-    const filteredGaps = gapCheck.missingRanges.filter(gap => {
-      const gapStart = gap.start.getTime();
-      const gapEnd = gap.end.getTime();
-      
-      // Пропуск должен пересекаться с запрошенным диапазоном
-      return gapEnd >= startTime && gapStart <= endTime;
-    }).map(gap => ({
-      start: new Date(Math.max(gap.start.getTime(), startTime)),
-      end: new Date(Math.min(gap.end.getTime(), endTime))
-    }));
+    const filteredGaps = gapCheck.missingRanges
+      .filter((gap) => {
+        const gapStart = gap.start.getTime();
+        const gapEnd = gap.end.getTime();
+
+        // Пропуск должен пересекаться с запрошенным диапазоном
+        return gapEnd >= startTime && gapStart <= endTime;
+      })
+      .map((gap) => ({
+        start: new Date(Math.max(gap.start.getTime(), startTime)),
+        end: new Date(Math.min(gap.end.getTime(), endTime)),
+      }));
 
     return filteredGaps;
   }

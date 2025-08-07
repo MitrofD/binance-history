@@ -1,25 +1,25 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bull';
 import { MongooseModule } from '@nestjs/mongoose';
 import { QueueService } from './queue.service';
-import { DownloadProcessor } from './processors/download.processor';
 import { QueueController } from './queue.controller';
 import { DownloadJob, DownloadJobSchema } from './schemas/download-job.schema';
 import { Symbol, SymbolSchema } from '../symbol/schemas/symbol.schema';
 import { BinanceModule } from '../binance/binance.module';
-import { HistoryModule } from '../history/history.module';
-import { WebsocketModule } from '../websocket/websocket.module';
 
 @Module({
   imports: [
+    // MongoDB схемы для управления задачами и символами
     MongooseModule.forFeature([
       { name: DownloadJob.name, schema: DownloadJobSchema },
       { name: Symbol.name, schema: SymbolSchema },
     ]),
+
+    // Bull Queue конфигурация для API (создание задач)
     BullModule.registerQueue({
       name: 'download',
       defaultJobOptions: {
-        removeOnComplete: 50,
+        removeOnComplete: 50, // Синхронизируем с worker настройками
         removeOnFail: 100,
         attempts: 3,
         backoff: {
@@ -28,11 +28,11 @@ import { WebsocketModule } from '../websocket/websocket.module';
         },
       },
     }),
+
     BinanceModule,
-    forwardRef(() => HistoryModule),
-    WebsocketModule,
   ],
-  providers: [QueueService, DownloadProcessor],
+
+  providers: [QueueService],
   controllers: [QueueController],
   exports: [QueueService],
 })

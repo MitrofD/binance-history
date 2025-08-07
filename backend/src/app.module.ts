@@ -1,4 +1,3 @@
-import * as path from 'path';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -7,29 +6,18 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { getMongoConfig } from './configs/mongo.config';
 import { getBullConfig } from './configs/bull.config';
+import { getThrottlerConfig } from './configs/throttler.config';
+import { getBaseConfigOptions } from './configs/env.config';
 import { SymbolModule } from './modules/symbol/symbol.module';
 import { HistoryModule } from './modules/history/history.module';
 import { BinanceModule } from './modules/binance/binance.module';
 import { WebsocketModule } from './modules/websocket/websocket.module';
 import { QueueModule } from './modules/queue/queue.module';
-import type { ConfigModuleOptions } from '@nestjs/config';
-
-const envExt = 'env';
-const envPath = `${envExt}s`;
-const modeEnv = process.env.NODE_ENV || 'development';
-
-const envFilePath: ConfigModuleOptions['envFilePath'] = [
-  path.resolve(envPath, `.${envExt}`),
-  path.resolve(envPath, `${modeEnv}.${envExt}`),
-];
 
 @Module({
   imports: [
-    // Конфигурация
-    ConfigModule.forRoot({
-      envFilePath,
-      isGlobal: true,
-    }),
+    // Конфигурация - используем общий helper
+    ConfigModule.forRoot(getBaseConfigOptions()),
 
     // MongoDB
     MongooseModule.forRootAsync({
@@ -45,20 +33,19 @@ const envFilePath: ConfigModuleOptions['envFilePath'] = [
       inject: [ConfigService],
     }),
 
-    // Rate limiting
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000, // 1 минута
-        limit: 100, // 100 запросов
-      },
-    ]),
+    // ОБНОВЛЕНО: Redis-based Rate limiting
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: getThrottlerConfig,
+    }),
 
     // Модули приложения
-    SymbolModule,
+    SymbolModule, // SymbolService доступен через экспорт для AppController
     HistoryModule,
-    BinanceModule,
-    WebsocketModule,
-    QueueModule,
+    BinanceModule, // BinanceService доступен через экспорт для AppController
+    WebsocketModule, // WebsocketGateway доступен через экспорт для AppController
+    QueueModule, // QueueService доступен через экспорт для AppController
   ],
   controllers: [AppController],
 })

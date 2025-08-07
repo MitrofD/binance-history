@@ -21,7 +21,7 @@ export class DownloadJob {
   status: JobStatus;
 
   @Prop({ default: 0 })
-  progress: number; // 0-100
+  progress: number;
 
   @Prop({ default: 0 })
   processedCandles: number;
@@ -39,19 +39,18 @@ export class DownloadJob {
   error?: string;
 
   @Prop()
-  bullJobId?: string; // ID задачи в Bull Queue
+  bullJobId?: string;
 
   @Prop({ type: Date })
   lastProgressUpdate?: Date;
 
   @Prop()
-  userId?: string; // ID пользователя, запустившего задачу
+  userId?: string;
 }
 
 export type DownloadJobDocument = HydratedDocument<DownloadJob>;
 export const DownloadJobSchema = SchemaFactory.createForClass(DownloadJob);
 
-// Индексы
 DownloadJobSchema.index({ symbol: 1, timeframe: 1 });
 DownloadJobSchema.index({ status: 1 });
 DownloadJobSchema.index({ bullJobId: 1 });

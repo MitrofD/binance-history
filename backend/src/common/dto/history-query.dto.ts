@@ -1,3 +1,4 @@
+// backend/src/common/dto/history-query.dto.ts
 import {
   IsString,
   IsEnum,
@@ -28,6 +29,11 @@ export class HistoryQueryDto {
   @Transform(({ value }) => parseInt(value))
   @IsInt()
   @Min(1)
-  @Max(1500)
-  limit?: number = 1000;
+  @Max(1000)
+  limit?: number = 100;
+
+  // ДОБАВИТЬ: cursor для пагинации
+  @IsOptional()
+  @IsDateString()
+  cursor?: string;
 }

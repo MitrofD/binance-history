@@ -25,7 +25,7 @@ export class HistoryController {
   constructor(private readonly historyService: HistoryService) {}
 
   @Get('candles')
-  @ApiOperation({ summary: 'Get historical candles' })
+  @ApiOperation({ summary: 'Get historical candles with cursor pagination' })
   @ApiResponse({ status: 200, description: 'Candles retrieved successfully' })
   @ApiQuery({ name: 'symbol', description: 'Trading symbol (e.g., BTCUSDT)' })
   @ApiQuery({ name: 'timeframe', enum: Timeframe, description: 'Timeframe' })
@@ -34,13 +34,18 @@ export class HistoryController {
   @ApiQuery({
     name: 'limit',
     required: false,
-    description: 'Limit results (max 1500)',
+    description: 'Limit results (max 1000, default 100)',
+  })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description: 'Cursor for pagination (ISO string)',
   })
   async getCandles(@Query() query: HistoryQueryDto) {
     try {
-      const candles = await this.historyService.getCandles(query);
+      const result = await this.historyService.getCandles(query);
 
-      if (candles.length === 0) {
+      if (result.data.length === 0) {
         throw new HttpException(
           `No data available for ${query.symbol} ${query.timeframe} in the specified time range`,
           HttpStatus.NOT_FOUND,
@@ -49,13 +54,19 @@ export class HistoryController {
 
       return {
         success: true,
-        data: candles,
+        data: result.data,
+        pagination: {
+          cursor: result.cursor,
+          hasNext: result.hasNext,
+          limit: query.limit || 100,
+          total: result.total, // Только для первого запроса
+        },
         meta: {
           symbol: query.symbol,
           timeframe: query.timeframe,
           startTime: query.startTime,
           endTime: query.endTime,
-          count: candles.length,
+          count: result.data.length,
         },
       };
     } catch (error) {

@@ -7,6 +7,16 @@ import { BinanceKlineData } from '../../common/interfaces/binance.interface';
 import { Timeframe } from '../../common/enums/timeframe.enum';
 import { HistoryQueryDto } from '../../common/dto/history-query.dto';
 
+interface MongoFilter {
+  symbol: string;
+  timeframe: string;
+  openTime: {
+    $gte?: Date;
+    $gt?: Date;
+    $lte: Date;
+  };
+}
+
 @Injectable()
 export class HistoryService {
   private readonly logger = new Logger(HistoryService.name);
@@ -20,8 +30,14 @@ export class HistoryService {
     symbol: string,
     timeframe: Timeframe,
     klines: BinanceKlineData[],
-  ): Promise<number> {
-    if (klines.length === 0) return 0;
+  ): Promise<{
+    newRecords: number;
+    updatedRecords: number;
+    totalProcessed: number;
+  }> {
+    if (klines.length === 0) {
+      return { newRecords: 0, updatedRecords: 0, totalProcessed: 0 };
+    }
 
     const candles = klines.map((kline) => ({
       symbol: symbol.toUpperCase(),
@@ -56,11 +72,20 @@ export class HistoryService {
         ordered: false,
       });
 
+      // Точный подсчет результатов
+      const newRecords = result.upsertedCount;
+      const updatedRecords = result.modifiedCount;
+      const totalProcessed = newRecords + updatedRecords;
+
       this.logger.log(
-        `Saved ${result.upsertedCount} new candles and updated ${result.modifiedCount} existing candles for ${symbol} ${timeframe}`,
+        `Saved ${newRecords} new candles and updated ${updatedRecords} existing candles for ${symbol} ${timeframe}`,
       );
 
-      return result.upsertedCount + result.modifiedCount;
+      return {
+        newRecords,
+        updatedRecords,
+        totalProcessed,
+      };
     } catch (error) {
       this.logger.error(
         `Failed to save candles for ${symbol} ${timeframe}:`,
@@ -70,21 +95,66 @@ export class HistoryService {
     }
   }
 
-  async getCandles(query: HistoryQueryDto): Promise<CandleDocument[]> {
-    const filter = {
+  async getCandles(query: HistoryQueryDto): Promise<{
+    data: CandleDocument[];
+    cursor: string | null;
+    hasNext: boolean;
+    total?: number; // Опционально для первого запроса
+  }> {
+    const filter: MongoFilter = {
       symbol: query.symbol.toUpperCase(),
       timeframe: query.timeframe,
       openTime: {
-        $gte: new Date(query.startTime),
         $lte: new Date(query.endTime),
       },
     };
 
-    return this.candleModel
+    // Если есть cursor, используем его как нижнюю границу
+    if (query.cursor) {
+      filter.openTime.$gt = new Date(query.cursor);
+    } else {
+      // Обычный диапазон без cursor
+      filter.openTime.$gte = new Date(query.startTime);
+    }
+
+    const limit = query.limit || 100;
+
+    // Запрашиваем limit + 1 для проверки наличия следующей страницы
+    const data = await this.candleModel
       .find(filter)
       .sort({ openTime: 1 })
-      .limit(query.limit)
+      .limit(limit + 1)
       .lean();
+
+    // Проверяем есть ли следующая страница
+    const hasNext = data.length > limit;
+    if (hasNext) {
+      data.pop(); // Убираем лишнюю запись
+    }
+
+    // Cursor для следующей страницы - это openTime последней записи
+    const cursor =
+      data.length > 0 ? data[data.length - 1].openTime.toISOString() : null;
+
+    // Опционально: подсчитываем общее количество только для первого запроса
+    let total: number | undefined;
+    if (!query.cursor) {
+      total = await this.candleModel.countDocuments({
+        symbol: query.symbol.toUpperCase(),
+        timeframe: query.timeframe,
+        openTime: {
+          $gte: new Date(query.startTime),
+          $lte: new Date(query.endTime),
+        },
+      });
+    }
+
+    return {
+      data,
+      cursor: hasNext ? cursor : null,
+      hasNext,
+      total,
+    };
   }
 
   async getDataRange(
@@ -115,10 +185,89 @@ export class HistoryService {
   async updateSymbolMetadata(
     symbol: string,
     timeframe: Timeframe,
+    newCandlesCount: number,
+    candlesData?: BinanceKlineData[], // Опционально для получения границ
   ): Promise<void> {
     const symbolUpper = symbol.toUpperCase();
 
-    // Получаем статистику по свечам
+    if (newCandlesCount === 0) {
+      this.logger.debug(
+        `No new candles to update metadata for ${symbolUpper} ${timeframe}`,
+      );
+      return;
+    }
+
+    try {
+      // Получаем текущие границы данных (быстрые запросы по индексу)
+      const [earliest, latest] = await Promise.all([
+        this.candleModel
+          .findOne({
+            symbol: symbolUpper,
+            timeframe,
+          })
+          .sort({ openTime: 1 })
+          .select('openTime')
+          .lean(),
+
+        this.candleModel
+          .findOne({
+            symbol: symbolUpper,
+            timeframe,
+          })
+          .sort({ openTime: -1 })
+          .select('openTime')
+          .lean(),
+      ]);
+
+      // Инкрементальное обновление метаданных
+      const updateQuery = {
+        $set: {
+          [`timeframes.${timeframe}.lastUpdated`]: new Date(),
+        },
+        $inc: {
+          [`timeframes.${timeframe}.totalCandles`]: newCandlesCount,
+        },
+      };
+
+      // Обновляем границы данных если найдены
+      if (earliest?.openTime) {
+        updateQuery.$set[`timeframes.${timeframe}.earliestData`] =
+          earliest.openTime;
+      }
+      if (latest?.openTime) {
+        updateQuery.$set[`timeframes.${timeframe}.latestData`] =
+          latest.openTime;
+      }
+
+      await this.symbolModel.findOneAndUpdate(
+        { symbol: symbolUpper },
+        updateQuery,
+        { upsert: true, new: true },
+      );
+
+      this.logger.log(
+        `Updated metadata for ${symbolUpper} ${timeframe}: +${newCandlesCount} candles`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to update metadata for ${symbolUpper} ${timeframe}:`,
+        error,
+      );
+      // Не бросаем ошибку - метаданные не критичны для работы
+    }
+  }
+
+  async recalculateSymbolMetadata(
+    symbol: string,
+    timeframe: Timeframe,
+  ): Promise<void> {
+    const symbolUpper = symbol.toUpperCase();
+
+    this.logger.log(
+      `Recalculating metadata for ${symbolUpper} ${timeframe}...`,
+    );
+
+    // Полный пересчет через агрегацию (используем только при необходимости)
     const stats = await this.candleModel.aggregate([
       {
         $match: {
@@ -136,11 +285,27 @@ export class HistoryService {
       },
     ]);
 
-    if (stats.length === 0) return;
+    if (stats.length === 0) {
+      // Сбрасываем метаданные если данных нет
+      await this.symbolModel.findOneAndUpdate(
+        { symbol: symbolUpper },
+        {
+          $set: {
+            [`timeframes.${timeframe}`]: {
+              earliestData: null,
+              latestData: null,
+              totalCandles: 0,
+              lastUpdated: new Date(),
+            },
+          },
+        },
+        { upsert: true, new: true },
+      );
+      return;
+    }
 
     const stat = stats[0];
 
-    // Обновляем или создаем запись символа
     await this.symbolModel.findOneAndUpdate(
       { symbol: symbolUpper },
       {
@@ -157,7 +322,7 @@ export class HistoryService {
     );
 
     this.logger.log(
-      `Updated metadata for ${symbolUpper} ${timeframe}: ${stat.totalCandles} candles`,
+      `Recalculated metadata for ${symbolUpper} ${timeframe}: ${stat.totalCandles} candles`,
     );
   }
 

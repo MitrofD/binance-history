@@ -51,5 +51,4 @@ export type SymbolDocument = HydratedDocument<Symbol>;
 export const SymbolSchema = SchemaFactory.createForClass(Symbol);
 
 // Индексы
-SymbolSchema.index({ symbol: 1 }, { unique: true });
 SymbolSchema.index({ isActive: 1 });
