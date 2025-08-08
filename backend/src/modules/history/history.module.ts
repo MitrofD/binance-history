@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { HistoryService } from './history.service';
+import { HistoryService } from './history.service'; // Теперь с батчингом
 import { HistoryController } from './history.controller';
 import { Candle, CandleSchema } from './schemas/candle.schema';
 import { Symbol, SymbolSchema } from '../symbol/schemas/symbol.schema';

@@ -3183,7 +3183,7 @@ inquirer@9.2.15:
     strip-ansi "^6.0.1"
     wrap-ansi "^6.2.0"
 
-ioredis@^5.3.2:
+ioredis@^5.3.2, ioredis@^5.7.0:
   version "5.7.0"
   resolved "https://registry.yarnpkg.com/ioredis/-/ioredis-5.7.0.tgz#be8f4a09bfb67bfa84ead297ff625973a5dcefc3"
   integrity sha512-NUcA93i1lukyXU+riqEyPtSEkyFq8tX90uL659J+qpCZ3rEdViB/APC58oAhIh3+bJln2hzdlZbBZsGNrlsR8g==
@@ -4055,9 +4055,9 @@ mongodb@~6.18.0:
     mongodb-connection-string-url "^3.0.0"
 
 mongoose@^8.0.0:
-  version "8.17.0"
-  resolved "https://registry.yarnpkg.com/mongoose/-/mongoose-8.17.0.tgz#20667986683a871bdfbcfafaa8ae052702e65034"
-  integrity sha512-mxW6TBPHViORfNYOFXCVOnT4d5aRr+CgDxTs1ViYXfuHzNpkelgJQrQa+Lz6hofoEQISnKlXv1L3ZnHyJRkhfA==
+  version "8.17.1"
+  resolved "https://registry.yarnpkg.com/mongoose/-/mongoose-8.17.1.tgz#d2feb74b6cf2f465c4430c7844416ecba04b2f0b"
+  integrity sha512-aodS4cacux5caoxB5ErEwRmrafIUsVRJxHnvP7URnSUnTenr32j1qBVV+KjYxryyLSisQkxglAFF69TNLeZTLg==
   dependencies:
     bson "^6.10.4"
     kareem "2.6.3"

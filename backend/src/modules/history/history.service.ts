@@ -17,9 +17,20 @@ interface MongoFilter {
   };
 }
 
+interface BatchResult {
+  newRecords: number;
+  updatedRecords: number;
+  totalProcessed: number;
+}
+
 @Injectable()
 export class HistoryService {
   private readonly logger = new Logger(HistoryService.name);
+
+  // Конфигурация батчинга
+  private readonly BATCH_SIZE = 5000; // Размер батча для MongoDB operations
+  private readonly BATCH_DELAY_MS = 100; // Задержка между батчами в мс
+  private readonly MAX_RETRIES = 3; // Максимум попыток для failed батчей
 
   constructor(
     @InjectModel(Candle.name) private candleModel: Model<CandleDocument>,
@@ -30,17 +41,131 @@ export class HistoryService {
     symbol: string,
     timeframe: Timeframe,
     klines: BinanceKlineData[],
-  ): Promise<{
-    newRecords: number;
-    updatedRecords: number;
-    totalProcessed: number;
-  }> {
+    onProgress?: (
+      processed: number,
+      total: number,
+      batchNumber: number,
+    ) => void,
+  ): Promise<BatchResult> {
     if (klines.length === 0) {
       return { newRecords: 0, updatedRecords: 0, totalProcessed: 0 };
     }
 
-    const candles = klines.map((kline) => ({
-      symbol: symbol.toUpperCase(),
+    const symbolUpper = symbol.toUpperCase();
+    const totalCandles = klines.length;
+    const totalBatches = Math.ceil(totalCandles / this.BATCH_SIZE);
+
+    this.logger.log(
+      `Starting batched save: ${totalCandles} candles in ${totalBatches} batches for ${symbolUpper} ${timeframe}`,
+    );
+
+    let totalNewRecords = 0;
+    let totalUpdatedRecords = 0;
+    let totalProcessedRecords = 0;
+
+    // Обработка по батчам
+    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+      const startIndex = batchIndex * this.BATCH_SIZE;
+      const endIndex = Math.min(startIndex + this.BATCH_SIZE, totalCandles);
+      const batch = klines.slice(startIndex, endIndex);
+
+      this.logger.debug(
+        `Processing batch ${batchIndex + 1}/${totalBatches}: ${batch.length} candles`,
+      );
+
+      try {
+        const batchResult = await this.processBatchWithRetry(
+          symbolUpper,
+          timeframe,
+          batch,
+          batchIndex + 1,
+        );
+
+        // Аккумулируем результаты
+        totalNewRecords += batchResult.newRecords;
+        totalUpdatedRecords += batchResult.updatedRecords;
+        totalProcessedRecords += batchResult.totalProcessed;
+
+        // Уведомляем о прогрессе
+        if (onProgress) {
+          onProgress(endIndex, totalCandles, batchIndex + 1);
+        }
+
+        this.logger.debug(
+          `Batch ${batchIndex + 1}/${totalBatches} completed: ${batchResult.newRecords} new, ${batchResult.updatedRecords} updated`,
+        );
+
+        // Небольшая пауза между батчами чтобы не перегружать MongoDB
+        if (batchIndex < totalBatches - 1) {
+          await this.sleep(this.BATCH_DELAY_MS);
+        }
+      } catch (error) {
+        this.logger.error(
+          `Failed to process batch ${batchIndex + 1}/${totalBatches}:`,
+          error,
+        );
+        throw new Error(
+          `Batch processing failed at batch ${batchIndex + 1}: ${error.message}`,
+        );
+      }
+    }
+
+    this.logger.log(
+      `Batched save completed for ${symbolUpper} ${timeframe}: ${totalNewRecords} new, ${totalUpdatedRecords} updated, ${totalProcessedRecords} total processed`,
+    );
+
+    return {
+      newRecords: totalNewRecords,
+      updatedRecords: totalUpdatedRecords,
+      totalProcessed: totalProcessedRecords,
+    };
+  }
+
+  /**
+   * Обработка одного батча с retry логикой
+   */
+  private async processBatchWithRetry(
+    symbol: string,
+    timeframe: Timeframe,
+    batch: BinanceKlineData[],
+    batchNumber: number,
+  ): Promise<BatchResult> {
+    let lastError: Error;
+
+    for (let attempt = 1; attempt <= this.MAX_RETRIES; attempt++) {
+      try {
+        return await this.processSingleBatch(symbol, timeframe, batch);
+      } catch (error) {
+        lastError = error;
+        this.logger.warn(
+          `Batch ${batchNumber} attempt ${attempt}/${this.MAX_RETRIES} failed:`,
+          error.message,
+        );
+
+        if (attempt < this.MAX_RETRIES) {
+          // Экспоненциальная задержка перед retry
+          const retryDelay = this.BATCH_DELAY_MS * Math.pow(2, attempt - 1);
+          await this.sleep(retryDelay);
+        }
+      }
+    }
+
+    throw new Error(
+      `Batch ${batchNumber} failed after ${this.MAX_RETRIES} attempts: ${lastError.message}`,
+    );
+  }
+
+  /**
+   * Обработка одного батча данных
+   */
+  private async processSingleBatch(
+    symbol: string,
+    timeframe: Timeframe,
+    batch: BinanceKlineData[],
+  ): Promise<BatchResult> {
+    // Подготавливаем данные для batch операции
+    const candles = batch.map((kline) => ({
+      symbol,
       timeframe,
       openTime: new Date(kline.openTime),
       closeTime: new Date(kline.closeTime),
@@ -54,52 +179,48 @@ export class HistoryService {
       takerBuyQuoteVolume: kline.takerBuyQuoteAssetVolume,
     }));
 
-    try {
-      // Используем bulk upsert для эффективной вставки
-      const bulkOps = candles.map((candle) => ({
-        updateOne: {
-          filter: {
-            symbol: candle.symbol,
-            timeframe: candle.timeframe,
-            openTime: candle.openTime,
-          },
-          update: { $set: candle },
-          upsert: true,
+    // Создаем bulk операции
+    const bulkOps = candles.map((candle) => ({
+      updateOne: {
+        filter: {
+          symbol: candle.symbol,
+          timeframe: candle.timeframe,
+          openTime: candle.openTime,
         },
-      }));
+        update: { $set: candle },
+        upsert: true,
+      },
+    }));
 
-      const result = await this.candleModel.bulkWrite(bulkOps, {
-        ordered: false,
-      });
+    // Выполняем batch операцию
+    const result = await this.candleModel.bulkWrite(bulkOps, {
+      ordered: false, // Продолжаем даже при ошибках в отдельных операциях
+      writeConcern: { w: 'majority', j: true }, // Обеспечиваем durability
+    });
 
-      // Точный подсчет результатов
-      const newRecords = result.upsertedCount;
-      const updatedRecords = result.modifiedCount;
-      const totalProcessed = newRecords + updatedRecords;
+    const newRecords = result.upsertedCount || 0;
+    const updatedRecords = result.modifiedCount || 0;
+    const totalProcessed = newRecords + updatedRecords;
 
-      this.logger.log(
-        `Saved ${newRecords} new candles and updated ${updatedRecords} existing candles for ${symbol} ${timeframe}`,
-      );
+    return {
+      newRecords,
+      updatedRecords,
+      totalProcessed,
+    };
+  }
 
-      return {
-        newRecords,
-        updatedRecords,
-        totalProcessed,
-      };
-    } catch (error) {
-      this.logger.error(
-        `Failed to save candles for ${symbol} ${timeframe}:`,
-        error,
-      );
-      throw error;
-    }
+  /**
+   * Утилита для задержки
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async getCandles(query: HistoryQueryDto): Promise<{
     data: CandleDocument[];
     cursor: string | null;
     hasNext: boolean;
-    total?: number; // Опционально для первого запроса
+    total?: number;
   }> {
     const filter: MongoFilter = {
       symbol: query.symbol.toUpperCase(),
@@ -182,11 +303,14 @@ export class HistoryService {
     };
   }
 
+  /**
+   * Обновление метаданных с батчингом для больших объемов
+   */
   async updateSymbolMetadata(
     symbol: string,
     timeframe: Timeframe,
     newCandlesCount: number,
-    candlesData?: BinanceKlineData[], // Опционально для получения границ
+    candlesData?: BinanceKlineData[],
   ): Promise<void> {
     const symbolUpper = symbol.toUpperCase();
 
@@ -198,28 +322,30 @@ export class HistoryService {
     }
 
     try {
-      // Получаем текущие границы данных (быстрые запросы по индексу)
+      // Если у нас много новых свечей, используем агрегацию для точного пересчета
+      if (newCandlesCount > 10000) {
+        this.logger.log(
+          `Large update detected (${newCandlesCount} candles), performing full recalculation for ${symbolUpper} ${timeframe}`,
+        );
+        await this.recalculateSymbolMetadata(symbol, timeframe);
+        return;
+      }
+
+      // Для небольших обновлений используем быстрый метод
       const [earliest, latest] = await Promise.all([
         this.candleModel
-          .findOne({
-            symbol: symbolUpper,
-            timeframe,
-          })
+          .findOne({ symbol: symbolUpper, timeframe })
           .sort({ openTime: 1 })
           .select('openTime')
           .lean(),
 
         this.candleModel
-          .findOne({
-            symbol: symbolUpper,
-            timeframe,
-          })
+          .findOne({ symbol: symbolUpper, timeframe })
           .sort({ openTime: -1 })
           .select('openTime')
           .lean(),
       ]);
 
-      // Инкрементальное обновление метаданных
       const updateQuery = {
         $set: {
           [`timeframes.${timeframe}.lastUpdated`]: new Date(),
@@ -229,7 +355,6 @@ export class HistoryService {
         },
       };
 
-      // Обновляем границы данных если найдены
       if (earliest?.openTime) {
         updateQuery.$set[`timeframes.${timeframe}.earliestData`] =
           earliest.openTime;

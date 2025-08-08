@@ -113,7 +113,7 @@ export class DownloadProcessor {
 
         this.websocketGateway.emitJobUpdate(jobId, {
           status: 'running',
-          progress: Math.round(5 + rangeProgress * 85), // 5-90% для загрузки
+          progress: Math.round(5 + rangeProgress * 75), // 5-80% для загрузки
           message: `Downloading ${range.description}... (${i + 1}/${totalRanges})`,
           symbol,
           timeframe,
@@ -131,7 +131,7 @@ export class DownloadProcessor {
               rangeProgress +
               (rangeProgressPercent / 100) *
                 (nextRangeProgress - rangeProgress);
-            const adjustedProgress = 5 + totalRangeProgress * 85;
+            const adjustedProgress = 5 + totalRangeProgress * 75;
 
             // Обновляем прогресс в БД
             this.queueService.updateJobProgress(
@@ -171,7 +171,7 @@ export class DownloadProcessor {
         // Уведомляем о начале сохранения
         this.websocketGateway.emitJobUpdate(jobId, {
           status: 'running',
-          progress: 95,
+          progress: 80,
           processedCandles: allKlines.length,
           message: `Saving ${allKlines.length} candles to database...`,
           symbol,
@@ -180,15 +180,52 @@ export class DownloadProcessor {
           endDate,
         });
 
-        // Сохраняем данные в MongoDB и получаем точную статистику
-        this.logger.log(`Saving ${allKlines.length} candles to database`);
+        // Сохраняем данные в MongoDB с батчингом и прогрессом
+        this.logger.log(
+          `Saving ${allKlines.length} candles to database with batching`,
+        );
+
         saveResult = await this.historyService.saveCandles(
           symbol,
           timeframe as any,
           allKlines,
+          // Коллбек для прогресса батчинга
+          (processed, total, batchNumber) => {
+            const saveProgress = 80 + (processed / total) * 15; // 80-95% для сохранения
+
+            this.websocketGateway.emitJobUpdate(jobId, {
+              status: 'running',
+              progress: Math.round(saveProgress),
+              processedCandles: allKlines.length,
+              message: `Saving batch ${batchNumber}... (${processed}/${total} candles)`,
+              symbol,
+              timeframe,
+              startDate,
+              endDate,
+            });
+
+            // Обновляем прогресс в БД
+            this.queueService.updateJobProgress(
+              jobId,
+              Math.round(saveProgress),
+              allKlines.length,
+            );
+          },
         );
 
-        // Обновляем метаинформацию только для новых записей
+        // Уведомляем об обновлении метаданных
+        this.websocketGateway.emitJobUpdate(jobId, {
+          status: 'running',
+          progress: 95,
+          processedCandles: allKlines.length,
+          message: 'Updating metadata...',
+          symbol,
+          timeframe,
+          startDate,
+          endDate,
+        });
+
+        // Обновляем метаинформацию (теперь с оптимизацией для больших объемов)
         await this.historyService.updateSymbolMetadata(
           symbol,
           timeframe as any,

@@ -1,37 +1,47 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
+
   const app = await NestFactory.create(AppModule);
-  
-  // CORS для фронтенда
+  const configService = app.get(ConfigService);
+
+  // CORS
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
     credentials: true,
+    origin: true,
   });
 
-  // Валидация входящих данных
-  app.useGlobalPipes(new ValidationPipe({
-    transform: true,
-    whitelist: true,
-    forbidNonWhitelisted: true,
-  }));
+  // Валидация
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  );
 
-  // Swagger документация
+  // Swagger
   const config = new DocumentBuilder()
     .setTitle('Binance History Service')
-    .setDescription('API for managing historical cryptocurrency data from Binance')
+    .setDescription(
+      'API for managing historical cryptocurrency data from Binance',
+    )
     .setVersion('1.0')
     .build();
-  
+
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api', app, document);
 
-  const port = parseInt(process.env.PORT, 10) || 3001;
+  const port = parseInt(configService.get('PORT', '3001'), 10);
   await app.listen(port);
-  console.log(`🚀 Application is running on: http://localhost:${port}`);
+
+  logger.log(`🚀 Application is running on: http://localhost:${port}`);
+  logger.log(`📚 API Documentation: http://localhost:${port}/api`);
 }
 
 bootstrap();
